@@ -1,0 +1,216 @@
+Description: Fixes to build correctly
+ Patch collection for build
+Author: Ervin Hegedus <airween@gmail.com>
+
+---
+Origin: upstream
+Last-Update: 2019-01-11
+
+--- libapache2-modsecurity3-0.0.9.orig/Makefile.am
++++ libapache2-modsecurity3-0.0.9/Makefile.am
+@@ -15,13 +15,21 @@ CLEANFILES = \
+ 	t/logs/* \
+ 	t/htdocs/index.html \
+ 	t/conf/extra.conf \
++	t/conf/httpd.conf \
+ 	t/conf/apache_test_config.pm \
+ 	t/conf/httpd.conf \
++	t/conf/mime.types \
++	t/conf/modules.conf \
+ 	src/*.lo \
+-	src/*.slo
++	src/*.slo \
++	src/*.o \
++	src/*.so \
++	src/.libs/*.so
++
+ 
+ CLEANDIRECTORIES = \
+-	t/logs
++	t/logs \
++	src/.libs
+ 
+ 
+ all:
+@@ -29,6 +37,17 @@ all:
+ 	build/apxs-wrapper
+ 
+ test:
+-	cd t/ && ./TEST
++	cd t/ && ./TEST -clean
++	cd t/ && ./TEST -configure
++	cd t/ && ./TEST -httpd_conf conf/httpd.conf -httpd @APACHE@ -apxs @APXS@
++
++
++install-exec-hook: $(pkglib_LTLIBRARIES)
++	@APXS@ -c -n mod_security3 ./src/mod_security3.so
++
++#install:
++#	mkdir -p $(target)/$(libdir)
++#	libtool --mode=install install $(LIBTOOL_LIB) $(target)/$(libdir) -inst-prefix-dir $(target)
++#	libtool --mode=finish $(target)/$(libdir)
+ 
+ .PHONY: all
+--- libapache2-modsecurity3-0.0.9.orig/build/ax_prog_apache.m4
++++ libapache2-modsecurity3-0.0.9/build/ax_prog_apache.m4
+@@ -114,6 +114,9 @@ AC_DEFUN([AX_PROG_APACHE],
+     if test -z "$APACHE" ; then
+       AC_PATH_PROG(APACHE, httpd, , /usr/local/apache/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/usr/local/apache2/bin)
+     fi
++    if test -z "$APACHE" ; then
++      AC_PATH_PROG(APACHE, apache2, , /usr/local/apache/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/usr/local/apache2/bin)
++    fi
+     AC_SUBST(APACHE)
+     if test -z "$APACHE" ; then
+         AC_MSG_ERROR("apache server executable not found");
+@@ -149,7 +152,12 @@ AC_DEFUN([AX_PROG_APACHE],
+     #
+     # Find out if .so modules are in libexec/module.so or modules/module.so
+     #
+-    HTTP_ROOT=`$APACHE -V | grep HTTPD_ROOT | sed -e 's/.*"\(.*\)"/\1/'`
++    if test -f /etc/apache2/envvars
++    then
++        HTTP_ROOT=`. /etc/apache2/envvars && $APACHE -V | grep HTTPD_ROOT | sed -e 's/.*"\(.*\)"/\1/'`
++    else
++        HTTP_ROOT=`$APACHE -V | grep HTTPD_ROOT | sed -e 's/.*"\(.*\)"/\1/'`
++    fi
+     AC_MSG_CHECKING(apache modules)
+     for dir in libexec modules
+     do
+--- libapache2-modsecurity3-0.0.9.orig/build/find_libmodsec.m4
++++ libapache2-modsecurity3-0.0.9/build/find_libmodsec.m4
+@@ -7,33 +7,24 @@ AC_ARG_WITH(libmodsecurity,
+                             [FILE is the path to libmodsecurity install dir; defaults to "/usr/local/modsecurity/".])],
+ [
+   if test "$withval" = "yes"; then
+-    V3PATH=/usr/local/modsecurity/
++    AC_SUBST(CPPFLAGS, "$CPPFLAGS -I/usr/local/modsecurity/include/ -L/usr/local/modsecurity/lib/")
++    V3INCLUDE="/usr/local/modsecurity/include/"
++    V3LIB="/usr/local/modsecurity/lib/"
+   else
+-    V3PATH="$withval"
++    AC_SUBST(CPPFLAGS, "$CPPFLAGS -I${withval}/include/ -L${withval}/lib/")
++    V3INCLUDE="${withval}/include/"
++    V3LIB="${withval}/lib/"
+   fi
+ ])
+ 
+-if test -z "$V3PATH"; then
+-  for i in /usr/local/modsecurity/ \
+-           /usr/local/sbin \
+-           /usr/local/bin \
+-           /usr/sbin \
+-           /usr/bin;
+-  do
+-    if test -f "$i/lib/libmodsecurity.so"; then
+-      V3LIB="$i/lib/"
+-    fi
+-    if test -f "$i/include/modsecurity/modsecurity.h"; then
+-      V3INCLUDE="$i/include/"
+-      # TODO: test if V3LIB is set
+-      break
+-    fi  
+-  done
+-fi
+-if test -n "$V3LIB" -a "$V3LIB" != "no" -a -x "$V3LIB" ; then
+-    AC_MSG_NOTICE(found libmodsecurity at $V3LIB)
+-else
+-    AC_MSG_ERROR(couldn't find libmodsecurity)
+-fi
++dnl Check the ModSecurity libraries (modsecurity)
++
++AC_CHECK_LIB([modsecurity], [msc_init], [
++        AC_DEFINE([HAVE_MODSECURITYLIB], [1],
++                [Define to 1 if you have the `libmodsecurity' library (-lmodsecurity).])], [
++        AC_MSG_ERROR([ModSecurity libraries not found!])])
++
++AC_CHECK_HEADERS([modsecurity/modsecurity.h], [], [
++        AC_MSG_ERROR([ModSecurity headers not found...])])
+ ])
+ 
+--- libapache2-modsecurity3-0.0.9.orig/configure.ac
++++ libapache2-modsecurity3-0.0.9/configure.ac
+@@ -13,6 +13,7 @@ AC_PATH_PROGS(PERL, [perl perl5], )
+ AC_SUBST(APXS)
+ AC_SUBST(V3LIB)
+ AC_SUBST(V3INCLUDE)
++AC_SUBST(APACHE)
+ 
+ # Some directories
+ MSC_BASE_DIR=`pwd`
+@@ -24,6 +25,17 @@ MSC_REGRESSION_CONF_DIR="$MSC_REGRESSION
+ MSC_REGRESSION_LOGS_DIR="$MSC_REGRESSION_SERVERROOT_DIR/logs"
+ MSC_REGRESSION_DOCROOT_DIR="$MSC_REGRESSION_SERVERROOT_DIR/htdocs"
+ 
++if test -f /etc/apache2/envvars
++then
++    SERVER_MPM=`. /etc/apache2/envvars && $APACHE -V | grep Server\ MPM | awk '{print $3}'`
++    SERVER_MPM_MODE=`. /etc/apache2/envvars && $APACHE -M | grep mpm_${SERVER_MPM}_module | awk '{print $2}' | sed -e 's/@<:@\@{:@\@:}@@:>@//g'`
++    SERVER_AUTHZ_MODE=`. /etc/apache2/envvars && $APACHE -M | grep authz_core_module | awk '{print $2}' | sed -e 's/@<:@\@{:@\@:}@@:>@//g'`
++else
++    SERVER_MPM=`$APACHE -V | grep Server\ MPM | awk '{print $3}'`
++    SERVER_MPM_MODE=`$APACHE -M | grep mpm_${SERVER_MPM}_module | awk '{print $2}' | sed -e 's/@<:@\@{:@\@:}@@:>@//g'`
++    SERVER_AUTHZ_MODE=`$APACHE -M | grep authz_core_module | awk '{print $2}' | sed -e 's/@<:@\@{:@\@:}@@:>@//g'`
++fi
++
+ AC_SUBST(MSC_BASE_DIR)
+ AC_SUBST(MSC_PKGBASE_DIR)
+ AC_SUBST(MSC_TEST_DIR)
+@@ -33,7 +45,11 @@ AC_SUBST(MSC_REGRESSION_CONF_DIR)
+ AC_SUBST(MSC_REGRESSION_LOGS_DIR)
+ AC_SUBST(MSC_REGRESSION_DOCROOT_DIR)
+ 
++AC_SUBST(SERVER_MPM)
++AC_SUBST(SERVER_MPM_MODE)
++AC_SUBST(SERVER_AUTHZ_MODE)
+ 
++echo "Found Apache with MPM ${SERVER_MPM}, ${SERVER_MPM_MODE}."
+ 
+ APXS_SBINDIR="`$APXS -q SBINDIR`"
+ APXS_PROGNAME="`$APXS -q PROGNAME`"
+@@ -44,6 +60,18 @@ APXS_LIBEXECDIR="`$APXS -q LIBEXECDIR`"
+ if test "xx$APXS_LIBEXECDIR" = "xx"; then APXS_LIBEXECDIR="`$APXS -q LIBDIR`/modules"; fi
+ AC_SUBST(APXS_LIBEXECDIR)
+ 
++# generating apache depends loadable modules
++# authz_core required, if not static
++# one mpm required, if not static
++echo "" > t/conf/modules.conf
++
++if @<:@ ${SERVER_AUTHZ_MODE} == "shared" @:>@; then
++    echo "LoadModule authz_core_module ${APXS_LIBEXECDIR}/mod_authz_core.so" >> t/conf/modules.conf
++fi
++if @<:@ ${SERVER_MPM_MODE} == "shared" @:>@; then
++    echo "LoadModule mpm_${SERVER_MPM}_module ${APXS_LIBEXECDIR}/mod_mpm_${SERVER_MPM}.so" >> t/conf/modules.conf
++fi
++echo "" >> t/conf/modules.conf
+ 
+ 
+ AC_CONFIG_FILES([\
+--- libapache2-modsecurity3-0.0.9.orig/t/conf/extra.conf.in
++++ libapache2-modsecurity3-0.0.9/t/conf/extra.conf.in
+@@ -2,6 +2,8 @@
+ 
+ CoreDumpDirectory /tmp/
+ 
++Include @ServerRoot@/.././t/conf/modules.conf
++
+ LoadModule security3_module "@ServerRoot@/.././src/.libs/mod_security3.so"
+ 
+ 
+@@ -26,6 +28,7 @@ modsecurity_rules 'SecDebugLogLevel 9'
+ </Directory>
+ 
+ <Directory "@ServerRoot@/htdocs/block-evil-4">
++    modsecurity_rules 'SecResponseBodyAccess On'
+     modsecurity_rules 'SecRule ARGS "evil" "phase:4,id:114,log,status:403,block,deny"'
+ </Directory>
+ 
+@@ -48,6 +51,7 @@ modsecurity_rules 'SecDebugLogLevel 9'
+ </Location>
+ 
+ <Location "/block-evil-4-loc">
++    modsecurity_rules 'SecResponseBodyAccess On'
+     modsecurity_rules 'SecRule ARGS "evil" "phase:4,id:1134,log,status:402,block,deny"'
+ </Location>
+ 

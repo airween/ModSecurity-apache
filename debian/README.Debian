@@ -1,0 +1,10 @@
+libapache2-modsecurity3 for Debian
+---------------------------------
+
+The ModSecurity-apache connector is the connection point between Apache
+and libmodsecurity (ModSecurity v3). Said another way, this project
+provides a communication channel between Apache and libmodsecurity.
+
+This connector is required to use LibModSecurity with Apache.
+
+ -- Ervin Hegedus <airween@gmail.com>  Thu, 27 Dec 2018 11:38:07 +0000

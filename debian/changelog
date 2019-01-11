@@ -1,0 +1,5 @@
+libapache2-modsecurity3 (0.0.9-1) unstable; urgency=medium
+
+  * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
+
+ -- Ervin Hegedus <airween@gmail.com>  Thu, 27 Dec 2018 11:38:07 +0000
